@@ -75,7 +75,11 @@ module Fluent
           return @cache2_time
         else
           begin
-            time = @parser.call(value).to_i
+						if value =~ /^\d{10}$/
+							time = value.to_i
+						else
+	            time = @parser.call(value).to_i
+						end
           rescue => e
             raise ParserError, "invalid time format: value = #{value}, error_class = #{e.class.name}, error = #{e.message}"
           end
