@@ -60,7 +60,7 @@ module Fluent
           if time_format
             Proc.new { |value| Time.strptime(value, time_format) }
           else
-            Time.method(:parse)
+            Proc.new { |value| value =~ /^\d+$/ ? Time.method(:at) : Time.method(:parse) }
           end
       end
 
@@ -75,11 +75,7 @@ module Fluent
           return @cache2_time
         else
           begin
-						if value =~ /^\d{10}$/
-							time = value.to_i
-						else
-	            time = @parser.call(value).to_i
-						end
+						time = @parser.call(value).to_i
           rescue => e
             raise ParserError, "invalid time format: value = #{value}, error_class = #{e.class.name}, error = #{e.message}"
           end
@@ -222,189 +218,6 @@ module Fluent
         if block_given?
           yield time, record
         else # keep backward compatibility. will be removed at v1
-          return time, record
-        end
-      end
-    end
-
-    class JSONParser < Parser
-      config_param :time_key, :string, :default => 'time'
-      config_param :time_format, :string, :default => nil
-
-      def configure(conf)
-        super
-
-        unless @time_format.nil?
-          @time_parser = TimeParser.new(@time_format)
-          @mutex = Mutex.new
-        end
-      end
-
-      def parse(text)
-        record = Yajl.load(text)
-
-        if value = record.delete(@time_key)
-          if @time_format
-            time = @mutex.synchronize { @time_parser.parse(value) }
-          else
-            begin
-              time = value.to_i
-            rescue => e
-              raise ParserError, "invalid time value: value = #{value}, error_class = #{e.class.name}, error = #{e.message}"
-            end
-          end
-        else
-          if @estimate_current_event
-            time = Engine.now
-          else
-            time = nil
-          end
-        end
-
-        if block_given?
-          yield time, record
-        else
-          return time, record
-        end
-      rescue Yajl::ParseError
-        if block_given?
-          yield nil, nil
-        else
-          return nil, nil
-        end
-      end
-    end
-
-    class ValuesParser < Parser
-      include TypeConverter
-
-      config_param :keys, :string
-      config_param :time_key, :string, :default => nil
-      config_param :time_format, :string, :default => nil
-
-      def configure(conf)
-        super
-
-        @keys = @keys.split(",")
-
-        if @time_key && !@keys.include?(@time_key) && @estimate_current_event
-          raise ConfigError, "time_key (#{@time_key.inspect}) is not included in keys (#{@keys.inspect})"
-        end
-
-        if @time_format && !@time_key
-          raise ConfigError, "time_format parameter is ignored because time_key parameter is not set. at #{conf.inspect}"
-        end
-
-        @time_parser = TimeParser.new(@time_format)
-        @mutex = Mutex.new
-      end
-
-      def values_map(values)
-        record = Hash[keys.zip(values)]
-
-        if @time_key
-          value = record.delete(@time_key)
-          time = if value.nil?
-                   if @estimate_current_event
-                     Engine.now
-                   else
-                     nil
-                   end
-                 else
-                   @mutex.synchronize { @time_parser.parse(value) }
-                 end
-        elsif @estimate_current_event
-          time = Engine.now
-        else
-          time = nil
-        end
-
-        convert_field_type!(record) if @type_converters
-
-        return time, record
-      end
-
-      private
-
-      def convert_field_type!(record)
-        @type_converters.each_key { |key|
-          if value = record[key]
-            record[key] = convert_type(key, value)
-          end
-        }
-      end
-    end
-
-    class TSVParser < ValuesParser
-      config_param :delimiter, :string, :default => "\t"
-
-      def configure(conf)
-        super
-        @key_num = @keys.length
-      end
-
-      def parse(text)
-        if block_given?
-          yield values_map(text.split(@delimiter, @key_num))
-        else
-          return values_map(text.split(@delimiter, @key_num))
-        end
-      end
-    end
-
-    class LabeledTSVParser < ValuesParser
-      config_param :delimiter,       :string, :default => "\t"
-      config_param :label_delimiter, :string, :default =>  ":"
-      config_param :time_key, :string, :default =>  "time"
-
-      def configure(conf)
-        conf['keys'] = conf['time_key'] || 'time'
-        super(conf)
-      end
-
-      def parse(text)
-        @keys  = []
-        values = []
-
-        text.split(delimiter).each do |pair|
-          key, value = pair.split(label_delimiter, 2)
-          @keys.push(key)
-          values.push(value)
-        end
-
-        if block_given?
-          yield values_map(values)
-        else
-          return values_map(values)
-        end
-      end
-    end
-
-    class CSVParser < ValuesParser
-      def initialize
-        super
-        require 'csv'
-      end
-
-      def parse(text)
-        if block_given?
-          yield values_map(CSV.parse_line(text))
-        else
-          return values_map(CSV.parse_line(text))
-        end
-      end
-    end
-
-    class NoneParser < Parser
-      config_param :message_key, :string, :default => 'message'
-
-      def parse(text)
-        record = {}
-        record[@message_key] = text
-        time = @estimate_current_event ? Engine.now : nil
-        if block_given?
-          yield time, record
-        else
           return time, record
         end
       end
