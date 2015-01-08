@@ -60,7 +60,7 @@ module Fluent
           if time_format
             Proc.new { |value| Time.strptime(value, time_format) }
           else
-            Proc.new { |value| value =~ /^\d+$/ ? Time.method(:at) : Time.method(:parse) }
+            Proc.new { |value| value =~ /^\d+$/ ? value : Time.method(:parse) }
           end
       end
 
